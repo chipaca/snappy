@@ -2333,6 +2333,10 @@ func (s *Store) snapAction(ctx context.Context, currentSnaps []*CurrentSnap, act
 		reqOptions.addHeader("Snap-Refresh-Reason", "scheduled")
 	}
 
+	if downloadNum > 0 || installNum > 0 {
+		reqOptions.addHeader("Snap-Device-Capabilities", "default-tracks")
+	}
+
 	if useDeltas() {
 		logger.Debugf("Deltas enabled. Adding header Snap-Accept-Delta-Format: %v", s.deltaFormat)
 		reqOptions.addHeader("Snap-Accept-Delta-Format", s.deltaFormat)
