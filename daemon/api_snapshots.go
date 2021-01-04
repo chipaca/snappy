@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -58,7 +59,10 @@ func listSnapshots(c *Command, r *http.Request, user *auth.UserState) Response {
 		}
 	}
 
-	sets, err := snapshotList(context.TODO(), setID, strutil.CommaSeparatedList(r.URL.Query().Get("snaps")))
+	st := c.d.overlord.State()
+	st.Lock()
+	defer st.Unlock()
+	sets, err := snapshotList(context.TODO(), st, setID, strutil.CommaSeparatedList(r.URL.Query().Get("snaps")))
 	if err != nil {
 		return InternalError("%v", err)
 	}
@@ -88,6 +92,11 @@ func (action snapshotAction) String() string {
 }
 
 func changeSnapshots(c *Command, r *http.Request, user *auth.UserState) Response {
+	contentType := r.Header.Get("Content-Type")
+	if contentType == client.SnapshotExportMediaType {
+		return doSnapshotImport(c, r, user)
+	}
+
 	var action snapshotAction
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&action); err != nil {
@@ -172,4 +181,25 @@ func getSnapshotExport(c *Command, r *http.Request, user *auth.UserState) Respon
 	}
 
 	return &snapshotExportResponse{SnapshotExport: export}
+}
+
+func doSnapshotImport(c *Command, r *http.Request, user *auth.UserState) Response {
+	defer r.Body.Close()
+
+	expectedSize, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
+	if err != nil {
+		return BadRequest("cannot parse Content-Length: %v", err)
+	}
+	// ensure we don't read more than we expect
+	limitedBodyReader := io.LimitReader(r.Body, expectedSize)
+
+	// XXX: check that we have enough space to import the compressed snapshots
+	st := c.d.overlord.State()
+	setID, snapNames, err := snapshotImport(context.TODO(), st, limitedBodyReader)
+	if err != nil {
+		return BadRequest(err.Error())
+	}
+
+	result := map[string]interface{}{"set-id": setID, "snaps": snapNames}
+	return SyncResponse(result, nil)
 }
